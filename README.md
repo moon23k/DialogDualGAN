@@ -1,28 +1,28 @@
-## C3_Bot
+## Dialog Dual GAN
+This repo
 
-**C3 Bot** referes to Coherent Characteristic Chat Bot.
+<br>
+
+## Model Desc
 
 <br>
 <br>
-
-## Model
-
-<br>
-<br>
-
 
 ## Configurations
 
 <br>
 <br>
 
-
-## Result
+## Results
 
 <br>
 <br>
 
+## How to Use
 
-## Reference
+<br>
+<br>
+
+## References
 
 <br>
