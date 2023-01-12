@@ -1,27 +1,26 @@
-## Dialog Dual GAN
-This repo
+## Dialog Step by Step Learning
+ 
+Dialogue Generation is the task of creating an appropriate response for a specific utterance. For the task, model learns how to generate the most appropriate answer based on utterance-response paired dataset. Within this training process, the model inevitably tends to frequently create general answers that would be appropriate in any situation. 
+
 
 <br>
 
-## Model Desc
+## Training Strategy
 
-<br>
-<br>
+
+<br><br>
 
 ## Configurations
 
-<br>
-<br>
+<br><br>
 
 ## Results
 
-<br>
-<br>
+<br><br>
 
 ## How to Use
 
-<br>
-<br>
+<br><br>
 
 ## References
 
