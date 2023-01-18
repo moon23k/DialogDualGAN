@@ -1,67 +1,46 @@
-import numpy as np
-import sentencepiece as spm
-import os, yaml, random, argparse
-
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.backends.cudnn as cudnn
-
-from module.model import load_model
-from module.data import load_dataloader
-
+import os, argparse, torch
+from tqdm import tqdm
 from module.test import Tester
 from module.train import Trainer
-from module.search import Search
+from module.data import load_dataloader
 
-
-
-def set_seed(SEED=42):
-    random.seed(SEED)
-    np.random.seed(SEED)
-    torch.manual_seed(SEED)
-    torch.cuda.manual_seed(SEED)
-    torch.cuda.manual_seed_all(SEED)
-    cudnn.benchmark = False
-    cudnn.deterministic = True
+from transformers import (T5Config,
+                          T5TransformerFast, 
+                          T5ForConditionalGeneration)
 
 
 
 class Config(object):
     def __init__(self, args):    
-        self.step = args.step
+
         self.mode = args.mode
-        self.ckpt = f"ckpt/{self.step}.pt"
 
+        self.clip = 1
+        self.lr = 5e-5
+        self.n_epochs = 10
+        self.batch_size = 16
         self.iters_to_accumulate = 4
-
+        
         use_cuda = torch.cuda.is_available()
-        if use_cuda:
-            self.device_type = 'cuda'
-        else:
-            self.device_type = 'cpu'
+        self.device_type = 'cuda' if use_cuda else 'cpu'
 
-        if self.task == 'inference':
+        if self.mode == 'inference':
             self.device = torch.device('cpu')
         else:
             self.device = torch.device('cuda' if use_cuda else 'cpu')
 
-        
-        with open('config.yaml', 'r') as f:
-            params = yaml.load(f, Loader=yaml.FullLoader)
-            for group in params.keys():
-                for key, val in params[group].items():
-                    setattr(self, key, val)
+        self.ckpt = f'ckpt/model.pt'
 
     def print_attr(self):
         for attribute, value in self.__dict__.items():
             print(f"* {attribute}: {value}")
 
 
+
+
 def load_tokenizer():
-    tokenizer = spm.SentencePieceProcessor()
-    tokenizer.load(f'data/spm.model')
-    tokenizer.SetEncodeExtraOptions('bos:eos')
+    assert os.path.exists('data/tokenizer.json')
+    tokenizer = T5TokenizerFast.from_pretrained('data/tokenizer.json')
     return tokenizer
 
 
@@ -86,13 +65,51 @@ def inference(config, model, tokenizer):
         print(f"Model Out Sequence >> {output_seq}")       
 
 
+def print_model_desc(model):
+    def count_params(model):
+        params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        return params
+
+    def check_size(model):
+        param_size, buffer_size = 0, 0
+
+        for param in model.parameters():
+            param_size += param.nelement() * param.element_size()
+        
+        for buffer in model.buffers():
+            buffer_size += buffer.nelement() * buffer.element_size()
+
+        size_all_mb = (param_size + buffer_size) / 1024**2
+        return size_all_mb
+
+    print(f"--- Model Params: {count_params(model):,}")
+    print(f"--- Model  Size : {check_size(model):.3f} MB\n")
+
+
+def load_model(config):
+    model_cfg = T5Config()
+    model_cfg.vocab_size = config.vocab_size
+
+    model = T5ForConditionalGeneration(model_cfg)
+    print(f"Model for {config.mode.upper()} has loaded")
+
+    if config.mode != 'train':
+        assert os.path.exists(config.ckpt)
+        model_state = torch.load(config.ckpt, map_location=config.device)['model_state_dict']        
+        model.load_state_dict(model_state)
+        print(f"Model States has loaded from {config.ckpt}")
+
+    print_model_desc(model)
+    return model        
+
 
 def main(args):
     set_seed()
     config = Config(args)
-    model = load_model(config)    
     tokenizer = load_tokenizer()
-
+    setattr(config, 'vocab_size', tokenizer.vocab_size)
+    model = load_model(config)    
+    
 
     if config.mode == 'train':
         train_dataloader = load_dataloader(config, 'train')
@@ -104,21 +121,18 @@ def main(args):
         test_dataloader = load_dataloader(config, 'test')
         tester = Tester(config, model, test_dataloader, tokenizer)
         tester.test()
-        tester.inference_test()
     
     elif config.mode == 'inference':
-        translator = inference(config, model, tokenizer)
-        translator.translate()
-    
+        inference(config, model, tokenizer)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('-step', required=True)
+    #parser.add_argument('-step', required=True)
     parser.add_argument('-mode', required=True)
     
     args = parser.parse_args()
-    assert args.step in ['first', 'second', 'third']
+    #assert args.step in ['first', 'second', 'last']
     assert args.mode in ['train', 'test', 'inference']
 
     main(args)

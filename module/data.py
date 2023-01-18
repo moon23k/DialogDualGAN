@@ -19,9 +19,10 @@ class Dataset(torch.utils.data.Dataset):
         return len(self.data)
     
     def __getitem__(self, idx):
-        src = self.data[idx]['src']
-        trg = self.data[idx]['trg']
-        return src, trg
+        input_ids = self.data[idx]['input_ids']
+        attention_mask = self.data[idx]['attention_mask']
+        labels = self.data[idx]['labels']
+        return input_ids, attention_mask, labels
 
 
 
@@ -30,23 +31,32 @@ def load_dataloader(config, split):
     pad_id = config.pad_id    
 
     def collate_fn(batch):
-        src_batch, trg_batch = [], []
+        ids_batch, mask_batch, labels_batch = [], []
         
-        for src, trg in batch:
+        for ids, mask, labels in batch:
             src_batch.append(torch.LongTensor(src))
             trg_batch.append(torch.LongTensor(trg))
         
-        src_batch = pad_sequence(src_batch,
+        ids_batch.append(torch.LongTensor(ids)) 
+        mask_batch.append(torch.LongTensor(mask))
+        labels_batch.append(torch.LongTensor(labels))
+
+
+        ids_batch = pad_sequence(ids_batch,
                                  batch_first=True,
                                  padding_value=pad_id)
         
-        trg_batch = pad_sequence(trg_batch, 
-                                 batch_first=True, 
-                                 padding_value=pad_id)
+        mask_batch = pad_sequence(mask_batch, 
+                                  batch_first=True, 
+                                  padding_value=pad_id)
+
+        labels_batch = pad_sequence(labels_batch, 
+                                    batch_first=True, 
+                                    padding_value=pad_id)
         
-        return {'src': src_batch, 
-                'trg': trg_batch[:-1],
-                'label': trg_batch[1:]}
+        return {'input_ids': input_ids_batch,
+                'attention_mask': mask_batch,
+                'labels': labels_batch}
 
 
     return DataLoader(Dataset(split), 

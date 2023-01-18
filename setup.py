@@ -1,9 +1,6 @@
 import os, re, json 
-import yaml, argparse
-import sentencepiece as spm
-from run import load_tokenizer
 from datasets import load_dataset
-
+from transformers import T5TransformerFast
 
 
 
@@ -58,55 +55,38 @@ def preprocess_data(orig_data, volumn=36000):
         volumn_cnt += 1
         if volumn_cnt == volumn:
             break
-        
-    with open('data/concat.txt', 'w') as f:
-        f.write('\n'.join(concat))
     
     return processed
 
 
-
-def build_vocab(task):
-    assert os.path.exists('config.yaml')
-    with open('config.yaml', 'r') as f:
-        vocab_config = yaml.load(f, Loader=yaml.FullLoader)['vocab']
-
-    assert os.path.exists(f'data/concat.txt')
-    opt = f"--input=data/concat.txt\
-            --model_prefix=data/spm\
-            --vocab_size={vocab_config['vocab_size']}\
-            --character_coverage={vocab_config['coverage']}\
-            --model_type={vocab_config['type']}\
-            --pad_id={vocab_config['pad_id']} --pad_piece={vocab_config['pad_piece']}\
-            --unk_id={vocab_config['unk_id']} --unk_piece={vocab_config['unk_piece']}\
-            --bos_id={vocab_config['bos_id']} --bos_piece={vocab_config['bos_piece']}\
-            --eos_id={vocab_config['eos_id']} --eos_piece={vocab_config['eos_piece']}"
-
-    spm.SentencePieceTrainer.Train(opt)
-    os.remove(f'data/concat.txt')
+def train_tokenizer(orig_data, max_vocab_size=30000):
+    old_tokenizer = T5TokenizerFast.from_pretrained('t5-small')
+    tokenizer = old_tokenizer.train_new_from_iterator(orig_data, max_vocab_size)
+    tokenizer.save_pretrained('data/tokenizer.json')
+    del old_tokenizer
+    
+    return tokenizer
 
 
 
-def tokenize_data(task, tokenized, tokenizer):
+def tokenize_data(tokenized, tokenizer):
     tokenized_data = []
     for elem in tokenized:
+
         temp_dict = dict()
-        
-        if task == 'sum':
-            temp = []
-            for seq in elem['src']:
-                temp.append(tokenizer.EncodeAsIds(seq))
-            temp_dict['src'] = temp
-        else:    
-            temp_dict['src'] = tokenizer.EncodeAsIds(elem['src'])
-        
-        temp_dict['trg'] = tokenizer.EncodeAsIds(elem['trg'])
+        encodings = tokenizer(elem['src'])
+
+        temp_dict['input_ids'] = encodings.input_ids
+        temp_dict['attention_mask'] = encodings.attention_mask
+        temp_dict['labels'] = tokenizer.encode(elem['trg'])
+
         tokenized_data.append(temp_dict)
     
     return tokenized_data
 
 
-def save_data(task, data_obj):
+
+def save_data(data_obj):
     #split data into train/valid/test sets
     train, valid, test = data_obj[:-6000], data_obj[-6000:-3000], data_obj[-3000:]
     data_dict = {k:v for k, v in zip(['train', 'valid', 'test'], [train, valid, test])}
@@ -118,20 +98,19 @@ def save_data(task, data_obj):
     
 
 
+
 def main(task):
     orig = load_dataset('daily_dialog', split='train')['dialog']
+    tokenizer = train_tokenizer(orig)
     processed = preprocess_data(orig)
 
-    #Build Vocab
-    build_vocab(task)
-
     #Tokenize Datasets
-    tokenizer = load_tokenizer(task)
-    tokenized = tokenize_data(task, processed, tokenizer)
+    tokenized = tokenize_data(processed, tokenizer)
 
     #Save Data
-    save_data(task, tokenized)
+    save_data(tokenized)
+
 
 
 if __name__ == '__main__':
-    main(args.task)
+    main()
