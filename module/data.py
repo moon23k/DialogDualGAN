@@ -31,15 +31,13 @@ def load_dataloader(config, split):
     pad_id = config.pad_id    
 
     def collate_fn(batch):
-        ids_batch, mask_batch, labels_batch = [], []
+        ids_batch, mask_batch, labels_batch = [], [], []
         
         for ids, mask, labels in batch:
-            src_batch.append(torch.LongTensor(src))
-            trg_batch.append(torch.LongTensor(trg))
         
-        ids_batch.append(torch.LongTensor(ids)) 
-        mask_batch.append(torch.LongTensor(mask))
-        labels_batch.append(torch.LongTensor(labels))
+            ids_batch.append(torch.LongTensor(ids)) 
+            mask_batch.append(torch.LongTensor(mask))
+            labels_batch.append(torch.LongTensor(labels))
 
 
         ids_batch = pad_sequence(ids_batch,
@@ -54,7 +52,7 @@ def load_dataloader(config, split):
                                     batch_first=True, 
                                     padding_value=pad_id)
         
-        return {'input_ids': input_ids_batch,
+        return {'input_ids': ids_batch,
                 'attention_mask': mask_batch,
                 'labels': labels_batch}
 

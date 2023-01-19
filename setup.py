@@ -1,6 +1,6 @@
 import os, re, json 
 from datasets import load_dataset
-from transformers import T5TransformerFast
+from transformers import T5TokenizerFast
 
 
 
@@ -60,9 +60,9 @@ def preprocess_data(orig_data, volumn=36000):
 
 
 def train_tokenizer(orig_data, max_vocab_size=30000):
-    old_tokenizer = T5TokenizerFast.from_pretrained('t5-small')
+    old_tokenizer = T5TokenizerFast.from_pretrained('t5-small', model_max_length=300)
     tokenizer = old_tokenizer.train_new_from_iterator(orig_data, max_vocab_size)
-    tokenizer.save_pretrained('data/tokenizer.json')
+    tokenizer.save_pretrained('data/tokenizer')
     del old_tokenizer
     
     return tokenizer
@@ -74,11 +74,11 @@ def tokenize_data(tokenized, tokenizer):
     for elem in tokenized:
 
         temp_dict = dict()
-        encodings = tokenizer(elem['src'])
+        encodings = tokenizer(elem['src'], truncation=True)
 
         temp_dict['input_ids'] = encodings.input_ids
         temp_dict['attention_mask'] = encodings.attention_mask
-        temp_dict['labels'] = tokenizer.encode(elem['trg'])
+        temp_dict['labels'] = tokenizer.encode(elem['trg'], truncation=True)
 
         tokenized_data.append(temp_dict)
     
@@ -98,8 +98,7 @@ def save_data(data_obj):
     
 
 
-
-def main(task):
+def main():
     orig = load_dataset('daily_dialog', split='train')['dialog']
     tokenizer = train_tokenizer(orig)
     processed = preprocess_data(orig)

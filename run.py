@@ -4,8 +4,9 @@ from module.test import Tester
 from module.train import Trainer
 from module.data import load_dataloader
 
-from transformers import (T5Config,
-                          T5TransformerFast, 
+from transformers import (set_seed,
+                          T5Config,
+                          T5TokenizerFast, 
                           T5ForConditionalGeneration)
 
 
@@ -16,7 +17,7 @@ class Config(object):
         self.mode = args.mode
 
         self.clip = 1
-        self.lr = 5e-5
+        self.lr = 1e-4
         self.n_epochs = 10
         self.batch_size = 16
         self.iters_to_accumulate = 4
@@ -39,30 +40,13 @@ class Config(object):
 
 
 def load_tokenizer():
-    assert os.path.exists('data/tokenizer.json')
-    tokenizer = T5TokenizerFast.from_pretrained('data/tokenizer.json')
+    assert os.path.exists('data/tokenizer')
+    tokenizer = T5TokenizerFast.from_pretrained('data/tokenizer', model_max_length=300)
     return tokenizer
 
 
 def inference(config, model, tokenizer):
-    search_module = Search(config, model, tokenizer)
-
-    print(f'--- Inference Process Started! ---')
-    print('[ Type "quit" on user input to stop the Process ]')
-    
-    while True:
-        input_seq = input('\nUser Input Sequence >> ').lower()
-
-        #Enc Condition
-        if input_seq == 'quit':
-            print('\n--- Inference Process has terminated! ---')
-            break        
-
-        if config.search_method == 'beam':
-            output_seq = search_module.beam_search(input_seq)
-        else:
-            output_seq = search_module.greedy_search(input_seq)
-        print(f"Model Out Sequence >> {output_seq}")       
+    return
 
 
 def print_model_desc(model):
@@ -89,6 +73,7 @@ def print_model_desc(model):
 def load_model(config):
     model_cfg = T5Config()
     model_cfg.vocab_size = config.vocab_size
+    model_cfg.update({'decoder_start_token_id': config.pad_id})
 
     model = T5ForConditionalGeneration(model_cfg)
     print(f"Model for {config.mode.upper()} has loaded")
@@ -100,13 +85,14 @@ def load_model(config):
         print(f"Model States has loaded from {config.ckpt}")
 
     print_model_desc(model)
-    return model        
+    return model.to(config.device)        
 
 
 def main(args):
-    set_seed()
+    set_seed(42)
     config = Config(args)
     tokenizer = load_tokenizer()
+    setattr(config, 'pad_id', tokenizer.pad_token_id)
     setattr(config, 'vocab_size', tokenizer.vocab_size)
     model = load_model(config)    
     

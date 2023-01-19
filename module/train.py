@@ -1,5 +1,6 @@
 import time, math, json, torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.amp as amp
 import torch.optim as optim
 
@@ -10,7 +11,6 @@ class Trainer:
         super(Trainer, self).__init__()
 
         self.model = model
-        self.step = config.step
         self.clip = config.clip
         self.device = config.device
         self.n_epochs = config.n_epochs
@@ -27,12 +27,9 @@ class Trainer:
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min')
         
         self.ckpt = config.ckpt
-        self.record_path = f"ckpt/{config.step}.json"
+        self.record_path = "ckpt/train.json"
         self.record_keys = ['epoch', 'train_loss', 'valid_loss',  
                             'learning_rate', 'train_time']
-        
-        self.second_criterion = nn.CrossEntropyLoss().to(self.device)
-        self.third_criterion = nn.MSELoss().to(self.device)
 
 
     @staticmethod
@@ -43,15 +40,12 @@ class Trainer:
         return f"{elapsed_min}m {elapsed_sec}s"
 
 
-
     def print_epoch(self, record_dict):
         print(f"""Epoch {record_dict['epoch']}/{self.n_epochs} | \
               Time: {record_dict['train_time']}""".replace(' ' * 14, ''))
         
         print(f"""  >> Train Loss: {record_dict['train_loss']:.3f} | \
               Valid Loss: {record_dict['valid_loss']:.3f}\n""".replace(' ' * 14, ''))
-
-
 
 
     def train(self):
@@ -88,25 +82,25 @@ class Trainer:
 
         input_ids = batch['input_ids'].to(self.device)
         attention_mask = batch['attention_mask'].to(self.device)
-        labels = batch['labels'].to(self.device)        
+        labels = batch['labels'].to(self.device)
 
-        first_loss = self.model(input_ids=input_ids,
+        seq_loss = self.model(input_ids=input_ids,
+                              attention_mask=attention_mask,
+                              labels=labels).loss
+
+        decoder_input_ids = torch.zeros(input_ids.size(0), 1, dtype=torch.long).to(self.device)
+        tok_logits = self.model(input_ids=input_ids,
                                 attention_mask=attention_mask,
-                                labels=labels).loss
-
-        pred = self.model.generate(input_ids=input_ids,
-                                   attention_mask=attention_mask,
-                                   use_cache=True, max_new_tokens=300)
+                                decoder_input_ids=decoder_input_ids).logits
         
-        second_loss = self.second_criterion(pred[:, 0], 
-                                            labels[:, 0])
-        
-        third_loss = self.third_criterion(pred.count_nonzero(dim=-1), 
-                                          pred.count_nonzero(dim=-1))
+        tok_loss = F.cross_entropy(tok_logits.contiguous().view(-1, self.vocab_size),
+                                   labels[:, 0].contiguous())
 
-        return (first_loss * 0.5) + \
-               (second_loss.item() * 0.25) + \
-               (third_loss.item() * 0.25)
+        sim_loss = None #TBD
+
+        return (seq_loss * 0.5) + \
+               (tok_loss.item() * 0.5) +\
+               (sim_loss.item() * 0.5)
           
 
 
@@ -135,8 +129,10 @@ class Trainer:
                 self.optimizer.zero_grad()
 
             epoch_loss += loss.item()
-        
-        return round(epoch_loss / tot_len, 3)
+
+        epoch_loss = round(epoch_loss / tot_len, 3)
+        epoch_ppl = round(math.exp(epoch_loss), 3)    
+        return epoch_loss, epoch_ppl
     
 
     def valid_epoch(self):
@@ -151,4 +147,6 @@ class Trainer:
                     loss = self.get_loss(batch)
                 epoch_loss += loss.item()
                 
-        return round(epoch_loss / tot_len, 3)
+        epoch_loss = round(epoch_loss / tot_len, 3)
+        epoch_ppl = round(math.exp(epoch_loss), 3)    
+        return epoch_loss, epoch_ppl
