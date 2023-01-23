@@ -14,6 +14,7 @@ class Trainer:
         self.clip = config.clip
         self.device = config.device
         self.n_epochs = config.n_epochs
+        self.strategy = config.strategy
         self.vocab_size = config.vocab_size
 
         self.device_type = config.device_type
@@ -78,29 +79,42 @@ class Trainer:
 
 
 
-    def get_loss(self, batch):
-
+    def get_loss(self, batch, apply_generative=False):
         input_ids = batch['input_ids'].to(self.device)
         attention_mask = batch['attention_mask'].to(self.device)
         labels = batch['labels'].to(self.device)
 
-        seq_loss = self.model(input_ids=input_ids,
-                              attention_mask=attention_mask,
-                              labels=labels).loss
+        base_loss = self.model(input_ids=input_ids,
+                               attention_mask=attention_mask,
+                               labels=labels).loss
 
-        decoder_input_ids = torch.zeros(input_ids.size(0), 1, dtype=torch.long).to(self.device)
-        tok_logits = self.model(input_ids=input_ids,
-                                attention_mask=attention_mask,
-                                decoder_input_ids=decoder_input_ids).logits
-        
-        tok_loss = F.cross_entropy(tok_logits.contiguous().view(-1, self.vocab_size),
-                                   labels[:, 0].contiguous())
+        if self.strategy == 'base':
+            return base_loss
 
-        sim_loss = None #TBD
+        elif self.strategy == 'token':
+            decoder_input_ids = torch.zeros(input_ids.size(0), 1, dtype=torch.long).to(self.device)
+            tok_logits = self.model(input_ids=input_ids,
+                                    attention_mask=attention_mask,
+                                    decoder_input_ids=decoder_input_ids).logits
+            
+            tok_loss = F.cross_entropy(tok_logits.contiguous().view(-1, self.vocab_size),
+                                       labels[:, 0].contiguous())
 
-        return (seq_loss * 0.5) + \
-               (tok_loss.item() * 0.5) +\
-               (sim_loss.item() * 0.5)
+            return (base_loss * 0.5) + \
+                   (tok_loss.item() * 0.5)
+
+
+        elif self.strategy == 'generative': 
+            if not apply_generative:
+                return base_loss
+
+            gen_logits = self.model.generate(input_ids=input_ids,
+                                             attention_mask=attention_mask,
+                                             max_new_tokens=300, use_cache=True)
+            gen_loss = F.cross_entropy()
+
+            return (base_loss * 0.5) + \
+                   (gen_loss.item() * 0.5)
           
 
 
@@ -112,9 +126,12 @@ class Trainer:
         for idx, batch in enumerate(self.train_dataloader):
 
             with torch.autocast(device_type=self.device_type, dtype=torch.float16):
-                loss = self.get_loss(batch)
+                if self.strategy == 'generative' and (idx + 1) % self.gen_term:
+                    loss = self.get_loss(batch, apply_generative=True)
+                else:
+                    loss = self.get_loss(batch)
                 loss = loss / self.iters_to_accumulate
-            
+                
             #Backward Loss
             self.scaler.scale(loss).backward()        
             

@@ -15,6 +15,7 @@ class Config(object):
     def __init__(self, args):    
 
         self.mode = args.mode
+        self.strategy = args.strategy
 
         self.clip = 1
         self.lr = 1e-4
@@ -30,7 +31,7 @@ class Config(object):
         else:
             self.device = torch.device('cuda' if use_cuda else 'cpu')
 
-        self.ckpt = f'ckpt/model.pt'
+        self.ckpt = f'ckpt/{self.strategy}/model.pt'
 
     def print_attr(self):
         for attribute, value in self.__dict__.items():
@@ -114,11 +115,11 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    #parser.add_argument('-step', required=True)
+    parser.add_argument('-strategy', required=True)
     parser.add_argument('-mode', required=True)
     
     args = parser.parse_args()
-    #assert args.step in ['first', 'second', 'last']
+    assert args.strategy in ['base', 'token', 'generative']
     assert args.mode in ['train', 'test', 'inference']
 
     main(args)

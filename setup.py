@@ -6,8 +6,7 @@ from transformers import T5TokenizerFast
 
 def preprocess_data(orig_data, volumn=36000):
     volumn_cnt = 0
-    src_list, trg_list = [], []
-    concat, processed = [], []
+    uttr_list, resp_list, processed = [], [], []
 
     for dial in orig_data:
         dial_list = []
@@ -22,33 +21,31 @@ def preprocess_data(orig_data, volumn=36000):
             continue
 
         elif dial_turns == 2:
-            src_list.append(dial_list[0])
-            trg_list.append(dial_list[1])
+            uttr_list.append(dial_list[0])
+            resp_list.append(dial_list[1])
             continue  #To avoid duplicate on below condition
 
         #Incase of dial_turns is even
         elif dial_turns % 2 == 0:
-            src_list.extend(dial_list[0::2])
-            trg_list.extend(dial_list[1::2])
+            uttr_list.extend(dial_list[0::2])
+            resp_list.extend(dial_list[1::2])
 
-            src_list.extend(dial_list[1:-1:2])
-            trg_list.extend(dial_list[2::2])
+            uttr_list.extend(dial_list[1:-1:2])
+            resp_list.extend(dial_list[2::2])
         
         #Incase of dial_turns is odds
         elif dial_turns % 2 == 1:
-            src_list.extend(dial_list[0:-1:2])
-            trg_list.extend(dial_list[1::2])
+            uttr_list.extend(dial_list[0:-1:2])
+            resp_list.extend(dial_list[1::2])
             
-            src_list.extend(dial_list[1::2])
-            trg_list.extend(dial_list[2::2])   
+            uttr_list.extend(dial_list[1::2])
+            resp_list.extend(dial_list[2::2])   
 
-    assert len(src_list) == len(trg_list)
-    for src, trg in zip(src_list, trg_list):
+    assert len(uttr_list) == len(resp_list)
+    for uttr, resp in zip(uttr_list, resp_list):
         temp_dict = dict()
-        temp_dict['src'] = src
-        temp_dict['trg'] = trg
-        
-        concat.append(src + trg)
+        temp_dict['uttr'] = uttr
+        temp_dict['resp'] = resp
         processed.append(temp_dict)
 
         #End Condition
@@ -68,22 +65,20 @@ def train_tokenizer(orig_data, max_vocab_size=30000):
     return tokenizer
 
 
-
 def tokenize_data(tokenized, tokenizer):
     tokenized_data = []
     for elem in tokenized:
 
         temp_dict = dict()
-        encodings = tokenizer(elem['src'], truncation=True)
+        encodings = tokenizer(elem['uttr'], truncation=True)
 
         temp_dict['input_ids'] = encodings.input_ids
         temp_dict['attention_mask'] = encodings.attention_mask
-        temp_dict['labels'] = tokenizer.encode(elem['trg'], truncation=True)
+        temp_dict['labels'] = tokenizer.encode(elem['resp'], truncation=True)
 
         tokenized_data.append(temp_dict)
     
     return tokenized_data
-
 
 
 def save_data(data_obj):
@@ -97,16 +92,12 @@ def save_data(data_obj):
         assert os.path.exists(f'data/{key}.json')
     
 
-
 def main():
     orig = load_dataset('daily_dialog', split='train')['dialog']
     tokenizer = train_tokenizer(orig)
+
     processed = preprocess_data(orig)
-
-    #Tokenize Datasets
     tokenized = tokenize_data(processed, tokenizer)
-
-    #Save Data
     save_data(tokenized)
 
 
