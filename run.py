@@ -18,7 +18,7 @@ class Config(object):
         self.strategy = args.strategy
 
         self.clip = 1
-        self.lr = 1e-4
+        self.lr = 5e-4
         self.n_epochs = 10
         self.batch_size = 16
         self.iters_to_accumulate = 4
@@ -31,7 +31,7 @@ class Config(object):
         else:
             self.device = torch.device('cuda' if use_cuda else 'cpu')
 
-        self.ckpt = f'ckpt/{self.strategy}/model.pt'
+        self.ckpt = f'ckpt/{self.strategy}_model.pt'
 
     def print_attr(self):
         for attribute, value in self.__dict__.items():

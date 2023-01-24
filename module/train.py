@@ -1,8 +1,8 @@
 import time, math, json, torch
-import torch.nn as nn
-import torch.nn.functional as F
 import torch.amp as amp
 import torch.optim as optim
+import torch.nn as nn
+import torch.nn.functional as F
 
 
 
@@ -19,6 +19,7 @@ class Trainer:
 
         self.device_type = config.device_type
         self.scaler = torch.cuda.amp.GradScaler()
+        self.generate_freq = config.generate_freq
         self.iters_to_accumulate = config.iters_to_accumulate        
 
         self.train_dataloader = train_dataloader
@@ -28,7 +29,7 @@ class Trainer:
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min')
         
         self.ckpt = config.ckpt
-        self.record_path = "ckpt/train.json"
+        self.record_path = f"ckpt/{self.strategy}_train.json"
         self.record_keys = ['epoch', 'train_loss', 'valid_loss',  
                             'learning_rate', 'train_time']
 
@@ -79,16 +80,38 @@ class Trainer:
 
 
 
-    def get_loss(self, batch, apply_generative=False):
+    def get_loss(self, batch, idx):
         input_ids = batch['input_ids'].to(self.device)
         attention_mask = batch['attention_mask'].to(self.device)
         labels = batch['labels'].to(self.device)
 
+        if (self.strategy == 'generative') and ((idx + 1) % self.generate_freq == 0):
+            outputs = self.model.generate(input_ids=input_ids,
+                                          attention_mask=attention_mask,
+                                          max_new_tokens=300, use_cache=True,
+                                          output_scores=True, return_dict_in_generate=True)
+            
+            gen_logits = torch.stack(outputs.scores)
+            pad_len = gen_logits.size(0) - labels.size(1)
+            
+            if pad_len < 0:
+                labels = labels[:, :gen_logits.size(0)]
+            elif pad_len > 0:
+                pad_tensor = torch.zeros(labels.size(0), pad_len, dtype=torch.long)
+                labels = torch.cat((labels, pad_tensor.to(self.device)), dim=-1)
+
+            gen_loss = F.cross_entropy(gen_logits.contiguous().view(-1, self.vocab_size), 
+                                    labels.contiguous().view(-1))
+            gen_loss.requires_grad_(True)
+            return gen_loss
+
+
         base_loss = self.model(input_ids=input_ids,
                                attention_mask=attention_mask,
                                labels=labels).loss
-
-        if self.strategy == 'base':
+      
+        if self.strategy == 'base' or \
+        (self.strategy == 'generative') and ((idx + 1) % self.generate_freq):
             return base_loss
 
         elif self.strategy == 'token':
@@ -100,21 +123,7 @@ class Trainer:
             tok_loss = F.cross_entropy(tok_logits.contiguous().view(-1, self.vocab_size),
                                        labels[:, 0].contiguous())
 
-            return (base_loss * 0.5) + \
-                   (tok_loss.item() * 0.5)
-
-
-        elif self.strategy == 'generative': 
-            if not apply_generative:
-                return base_loss
-
-            gen_logits = self.model.generate(input_ids=input_ids,
-                                             attention_mask=attention_mask,
-                                             max_new_tokens=300, use_cache=True)
-            gen_loss = F.cross_entropy()
-
-            return (base_loss * 0.5) + \
-                   (gen_loss.item() * 0.5)
+            return (base_loss * 0.5) + (tok_loss.item() * 0.5)
           
 
 
@@ -126,10 +135,7 @@ class Trainer:
         for idx, batch in enumerate(self.train_dataloader):
 
             with torch.autocast(device_type=self.device_type, dtype=torch.float16):
-                if self.strategy == 'generative' and (idx + 1) % self.gen_term:
-                    loss = self.get_loss(batch, apply_generative=True)
-                else:
-                    loss = self.get_loss(batch)
+                loss = self.get_loss(batch, idx)
                 loss = loss / self.iters_to_accumulate
                 
             #Backward Loss
@@ -158,10 +164,10 @@ class Trainer:
         tot_len = len(self.valid_dataloader)
         
         with torch.no_grad():
-            for _, batch in enumerate(self.valid_dataloader):
+            for idx, batch in enumerate(self.valid_dataloader):
                 
                 with torch.autocast(device_type=self.device_type, dtype=torch.float16):
-                    loss = self.get_loss(batch)
+                    loss = self.get_loss(batch, idx)
                 epoch_loss += loss.item()
                 
         epoch_loss = round(epoch_loss / tot_len, 3)
