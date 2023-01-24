@@ -30,7 +30,8 @@ class Trainer:
         
         self.ckpt = config.ckpt
         self.record_path = f"ckpt/{self.strategy}_train.json"
-        self.record_keys = ['epoch', 'train_loss', 'valid_loss',  
+        self.record_keys = ['epoch', 'train_loss', 'train_ppl', 
+                            'valid_loss', 'valid_ppl', 
                             'learning_rate', 'train_time']
 
 
