@@ -1,10 +1,17 @@
-import os, re, json 
+import os, re, json, torch
+from tqdm import tqdm
+import numpy as np
+import torch.nn as nn
 from datasets import load_dataset
-from transformers import T5TokenizerFast
+from sklearn.cluster import KMeans
+from transformers import (T5TokenizerFast,
+                          RobertaTokenizerFast, 
+                          RobertaModel)
 
 
 
-def preprocess_data(orig_data, volumn=36000):
+
+def preprocess_data(orig_data):
     volumn_cnt = 0
     uttr_list, resp_list, processed = [], [], []
 
@@ -47,58 +54,103 @@ def preprocess_data(orig_data, volumn=36000):
         temp_dict['uttr'] = uttr
         temp_dict['resp'] = resp
         processed.append(temp_dict)
-
-        #End Condition
-        volumn_cnt += 1
-        if volumn_cnt == volumn:
-            break
     
     return processed
 
 
-def train_tokenizer(orig_data, max_vocab_size=30000):
-    old_tokenizer = T5TokenizerFast.from_pretrained('t5-small', model_max_length=300)
-    tokenizer = old_tokenizer.train_new_from_iterator(orig_data, max_vocab_size)
-    tokenizer.save_pretrained('data/tokenizer')
-    del old_tokenizer
+def batchify(data, batch_size=16):
+    for idx in range(0, len(data), batch_size):
+        yield data[idx : idx+batch_size]
+
+
+def get_clusters(model, tokenizer, data_obj, n_clusters=20):
+    model.eval()
+    responses = [elem['resp'] for elem in data_obj]
+    batchified = batchify(responses)
+
+    semantics = []
+    for batch in tqdm(batchified):    
+        encodings = tokenizer(batch, padding=True, truncation=True, return_tensors='pt').to(model.device)
+        input_ids, attention_mask = encodings.input_ids, encodings.attention_mask
+        max_len = attention_mask.size(1)
     
-    return tokenizer
+        with torch.no_grad():
+            output = model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
+        
+        semantic = torch.matmul(attention_mask.type(torch.float32).view(-1, 1, max_len), output).squeeze()
+        
+        if semantic.dim() == 1:
+            semantic = semantic.unsqueeze(0)
+
+        semantics.extend(semantic.detach().to('cpu').numpy())
 
 
-def tokenize_data(tokenized, tokenizer):
-    tokenized_data = []
-    for elem in tokenized:
+    semantics = np.array(semantics)
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, init='k-means++').fit(semantics)
 
-        temp_dict = dict()
-        encodings = tokenizer(elem['uttr'], truncation=True)
+    clusters = kmeans.labels_
+    centroids = kmeans.cluster_centers_
+    np.save('data/centroids', centroids)
 
-        temp_dict['input_ids'] = encodings.input_ids
-        temp_dict['attention_mask'] = encodings.attention_mask
-        temp_dict['labels'] = tokenizer.encode(elem['resp'], truncation=True)
-
-        tokenized_data.append(temp_dict)
-    
-    return tokenized_data
+    return clusters
 
 
-def save_data(data_obj):
-    #split data into train/valid/test sets
+
+def tokenize_data(tokenizer, data_obj):
+    tokenized = []
+
+    for elem in data_obj:        
+        uttr_encodings = tokenizer(elem['uttr'])
+
+        input_ids = uttr_encodings.input_ids
+        attention_mask = uttr_encodings.attention_mask
+
+        labels = tokenizer(elem['resp']).input_ids
+
+        tokenized.append({'input_ids': input_ids,
+                          'attention_mask': attention_mask,
+                          'labels': labels})    
+
+    return tokenized
+
+
+
+def save_data(data_obj):  #split data into train/valid/test sets
     train, valid, test = data_obj[:-6000], data_obj[-6000:-3000], data_obj[-3000:]
     data_dict = {k:v for k, v in zip(['train', 'valid', 'test'], [train, valid, test])}
 
     for key, val in data_dict.items():
-        with open(f'data/{key}.json', 'w') as f:
+        with open(f'data/gen_{key}.json', 'w') as f:
             json.dump(val, f)        
-        assert os.path.exists(f'data/{key}.json')
-    
+        assert os.path.exists(f'data/gen_{key}.json')
+
+
 
 def main():
-    orig = load_dataset('daily_dialog', split='train')['dialog']
-    tokenizer = train_tokenizer(orig)
+    #prerequisite
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    tokenizer = T5TokenizerFast.from_pretrained('t5-small')
+    sem_model = RobertaModel.from_pretrained("roberta-base").to(device)
+    sem_tokenizer = RobertaTokenizerFast.from_pretrained("roberta-base")
 
-    processed = preprocess_data(orig)
-    tokenized = tokenize_data(processed, tokenizer)
-    save_data(tokenized)
+    #Load orig_data
+    orig_data = load_dataset('daily_dialog')
+
+    #preprocess orig data
+    processed_data = preprocess_data(orig_data['train']['dialog']) +\
+                     preprocess_data(orig_data['validation']['dialog']) +\
+                     preprocess_data(orig_data['test']['dialog'])
+    
+    #Add cluster info up to the processed data
+    cluster_data = get_clusters(sem_model, sem_tokenizer, processed_data)
+
+    #tokenize data and add up cluster info
+    tokenized_data = tokenize_data(tokenizer, processed_data)
+    for elem, cluster in zip(tokenized_data, cluster_data):
+        elem.update({'cluster': cluster})
+    
+    #save the data
+    save_data(tokenized_data)
 
 
 

@@ -1,4 +1,5 @@
 import os, argparse, torch
+import numpy as np
 from tqdm import tqdm
 from module.test import Tester
 from module.train import Trainer
@@ -32,6 +33,7 @@ class Config(object):
             self.device = torch.device('cuda' if use_cuda else 'cpu')
 
         self.ckpt = f'ckpt/{self.strategy}_model.pt'
+        self.centroids = np.load('data/centroids.npy')
 
     def print_attr(self):
         for attribute, value in self.__dict__.items():
@@ -119,7 +121,7 @@ if __name__ == '__main__':
     parser.add_argument('-mode', required=True)
     
     args = parser.parse_args()
-    assert args.strategy in ['base', 'token', 'generative']
+    assert args.strategy in ['base', 'sement']
     assert args.mode in ['train', 'test', 'inference']
 
     main(args)
