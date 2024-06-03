@@ -4,11 +4,11 @@ from tqdm import tqdm
 from module.test import Tester
 from module.train import Trainer
 from module.data import load_dataloader
+from transformers import (
+    set_seed, T5Config,
+    T5TokenizerFast, T5ForConditionalGeneration
+)
 
-from transformers import (set_seed,
-                          T5Config,
-                          T5TokenizerFast, 
-                          T5ForConditionalGeneration)
 
 
 
@@ -41,15 +41,18 @@ class Config(object):
 
 
 
+def load_tokenizer(config):
+    tokenizer = AutoTokenizer.from_pretrained(
+        config.ple_name, model_max_length=config.max_len
+    )
 
-def load_tokenizer():
-    assert os.path.exists('data/tokenizer')
-    tokenizer = T5TokenizerFast.from_pretrained('data/tokenizer', model_max_length=300)
+    #update config attrs
+    setattr(config, 'vocab_size', tokenizer.vocab_size)
+    setattr(config, 'pad_id', tokenizer.pad_token_id)
+    setattr(config, 'bos_id', tokenizer.cls_token_id)
+    setattr(config, 'eos_id', tokenizer.sep_token_id)        
     return tokenizer
 
-
-def inference(config, model, tokenizer):
-    return
 
 
 def print_model_desc(model):
@@ -73,6 +76,8 @@ def print_model_desc(model):
     print(f"--- Model  Size : {check_size(model):.3f} MB\n")
 
 
+
+
 def load_model(config):
     model_cfg = T5Config()
     model_cfg.vocab_size = config.vocab_size
@@ -89,6 +94,7 @@ def load_model(config):
 
     print_model_desc(model)
     return model.to(config.device)        
+
 
 
 def main(args):
@@ -121,7 +127,7 @@ if __name__ == '__main__':
     parser.add_argument('-mode', required=True)
     
     args = parser.parse_args()
-    assert args.strategy in ['base', 'sement']
+    assert args.strategy in ['base', 'dress']
     assert args.mode in ['train', 'test', 'inference']
 
     main(args)

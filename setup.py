@@ -2,11 +2,12 @@ import os, re, json, torch
 from tqdm import tqdm
 import numpy as np
 import torch.nn as nn
+from run import Config
+
 from datasets import load_dataset
 from sklearn.cluster import KMeans
-from transformers import (T5TokenizerFast,
-                          RobertaTokenizerFast, 
-                          RobertaModel)
+from transformers import AutoModel, AutoTokenizer
+
 
 
 
@@ -58,9 +59,13 @@ def preprocess_data(orig_data):
     return processed
 
 
+
+
 def batchify(data, batch_size=16):
     for idx in range(0, len(data), batch_size):
         yield data[idx : idx+batch_size]
+
+
 
 
 def get_clusters(model, tokenizer, data_obj, n_clusters=20):
@@ -96,10 +101,11 @@ def get_clusters(model, tokenizer, data_obj, n_clusters=20):
 
 
 
+
 def tokenize_data(tokenizer, data_obj):
     tokenized = []
 
-    for elem in data_obj:        
+    for elem in data_obj:
         uttr_encodings = tokenizer(elem['uttr'])
 
         input_ids = uttr_encodings.input_ids
@@ -115,7 +121,9 @@ def tokenize_data(tokenizer, data_obj):
 
 
 
-def save_data(data_obj):  #split data into train/valid/test sets
+
+
+def save_data(data_obj): 
     train, valid, test = data_obj[:-6000], data_obj[-6000:-3000], data_obj[-3000:]
     data_dict = {k:v for k, v in zip(['train', 'valid', 'test'], [train, valid, test])}
 
@@ -126,28 +134,35 @@ def save_data(data_obj):  #split data into train/valid/test sets
 
 
 
+
+
 def main():
-    #prerequisite
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    tokenizer = T5TokenizerFast.from_pretrained('t5-small')
-    sem_model = RobertaModel.from_pretrained("roberta-base").to(device)
-    sem_tokenizer = RobertaTokenizerFast.from_pretrained("roberta-base")
+    #Prerequisite
+    config = Config()
+    mname = config.classifier_name
+    tokenizer = AutoTokenizer.from_pretrained(mname)
+    classifier = AutoModel.from_pretrained(mname).to(config.device)
+
 
     #Load orig_data
     orig_data = load_dataset('daily_dialog')
+
 
     #preprocess orig data
     processed_data = preprocess_data(orig_data['train']['dialog']) +\
                      preprocess_data(orig_data['validation']['dialog']) +\
                      preprocess_data(orig_data['test']['dialog'])
+
     
     #Add cluster info up to the processed data
     cluster_data = get_clusters(sem_model, sem_tokenizer, processed_data)
+
 
     #tokenize data and add up cluster info
     tokenized_data = tokenize_data(tokenizer, processed_data)
     for elem, cluster in zip(tokenized_data, cluster_data):
         elem.update({'cluster': cluster})
+
     
     #save the data
     save_data(tokenized_data)
