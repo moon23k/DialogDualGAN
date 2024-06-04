@@ -1,24 +1,21 @@
-## Dialog Generation with SEMENT Technique
+## DRESS (Diversifying RESponses Semantically)
 
-> This repository provides code for enhancing the diversity of utterances in dialogue generation models. The code is based on the methodology introduced in the paper titled Measuring and Improving Semantic Diversity of Dialogue Generation.
-
+> 
 
 <br><br>
-
 
 ## Setup
 
 <br><br>
 
-## Results
-
-<br><br>
 
 ## How to Use
 ```
+git clone 
 ```
 <br><br>
 
 ## References
-
+[Attention Is All You Need](https://arxiv.org/abs/1706.03762) <br>
+[Measuring and Improving Semantic Diversity of Dialogue Generation](https://arxiv.org/pdf/2210.05725)
 <br>
