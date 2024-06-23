@@ -1,36 +1,29 @@
 import os, argparse, torch
 import numpy as np
 from tqdm import tqdm
-from module.test import Tester
-from module.train import Trainer
-from module.data import load_dataloader
-from transformers import (
-    set_seed, T5Config,
-    T5TokenizerFast, T5ForConditionalGeneration
-)
+from module import load_dataloader, Trainer, Tester
+from transformers import set_seed, AutoModel, AutoTokenizer
+
 
 
 
 
 class Config(object):
-    def __init__(self, args):    
+    def __init__(self, args):
+
+        with open('config.yaml', 'r') as f:
+            params = yaml.load(f, Loader=yaml.FullLoader)
+            for group in params.keys():
+                for key, val in params[group].items():
+                    setattr(self, key, val)
 
         self.mode = args.mode
         self.strategy = args.strategy
-
-        self.clip = 1
-        self.lr = 5e-4
-        self.n_epochs = 10
-        self.batch_size = 16
-        self.iters_to_accumulate = 4
         
         use_cuda = torch.cuda.is_available()
-        self.device_type = 'cuda' if use_cuda else 'cpu'
-
-        if self.mode == 'inference':
-            self.device = torch.device('cpu')
-        else:
-            self.device = torch.device('cuda' if use_cuda else 'cpu')
+        device_condition = use_cuda and self.mode != 'inference'
+        self.device_type = 'cuda' if device_condition else 'cpu'
+        self.device = torch.device(self.device_type)    
 
         self.ckpt = f'ckpt/{self.strategy}_model.pt'
         self.centroids = np.load('data/centroids.npy')

@@ -92,17 +92,21 @@ class Trainer:
         labels = batch['labels'].to(self.device)
         
         if self.strategy == 'base':
-            return self.model(input_ids=input_ids,
-                              attention_mask=attention_mask,
-                              labels=labels).loss
+            return self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                labels=labels
+            ).loss
 
 
         clusters = batch['clusters']
         batch_size = input_ids.size(0)
 
-        logits = self.model(input_ids=input_ids,
-                            attention_mask=attention_mask,
-                            labels=labels).logit.argmax()
+        logits = self.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            labels=labels
+        ).logit.argmax()
         
         batch_loss = 0
         for i in range(batch_size):

@@ -1,173 +1,162 @@
-import os, re, json, torch
-from tqdm import tqdm
-import numpy as np
-import torch.nn as nn
-from run import Config
+import os, re, json, yaml, argparse
 
+import datasets
 from datasets import load_dataset
+
+import numpy as np
 from sklearn.cluster import KMeans
 from transformers import AutoModel, AutoTokenizer
 
+from tokenizers.models import BPE
+from tokenizers import Tokenizer, normalizers
+from tokenizers.trainers import BpeTrainer
+from tokenizers.pre_tokenizers import Whitespace
+from tokenizers.normalizers import NFD, Lowercase, StripAccents
 
 
 
 
-def preprocess_data(orig_data):
-    volumn_cnt = 0
-    uttr_list, resp_list, processed = [], [], []
 
-    for dial in orig_data:
-        dial_list = []
-        dial_turns = len(dial)
-        
-        for uttr in dial:
-            _uttr = re.sub(r"\s([?,.!’](?:\s|$))", r'\1', uttr)
-            _uttr = re.sub(r'([’])\s+', r'\1', _uttr)
-            dial_list.append(_uttr.strip().lower())
-        
-        if dial_turns < 2:
-            continue
 
-        elif dial_turns == 2:
-            uttr_list.append(dial_list[0])
-            resp_list.append(dial_list[1])
-            continue  #To avoid duplicate on below condition
+def load_orig_data(d_name):
+    if d_name == 'daily':
+        return load_dataset('daily_dialog', trust_remote_code=True)
+    elif d_name == 'blend':
+        return load_dataset('blended_skill_talk', trust_remote_code=True)
 
-        #Incase of dial_turns is even
-        elif dial_turns % 2 == 0:
-            uttr_list.extend(dial_list[0::2])
-            resp_list.extend(dial_list[1::2])
 
-            uttr_list.extend(dial_list[1:-1:2])
-            resp_list.extend(dial_list[2::2])
-        
-        #Incase of dial_turns is odds
-        elif dial_turns % 2 == 1:
-            uttr_list.extend(dial_list[0:-1:2])
-            resp_list.extend(dial_list[1::2])
-            
-            uttr_list.extend(dial_list[1::2])
-            resp_list.extend(dial_list[2::2])   
 
-    assert len(uttr_list) == len(resp_list)
-    for uttr, resp in zip(uttr_list, resp_list):
-        temp_dict = dict()
-        temp_dict['uttr'] = uttr
-        temp_dict['resp'] = resp
-        processed.append(temp_dict)
+
+def get_pre_fn(d_name):
+    common_fn = lambda x: re.sub(r'\.$', '', re.sub(r'。', '', re.sub(r"\s*'\s*", "'", x))).lower().strip()
+
+    if d_name == 'daily':
+        return lambda x: re.sub(r"\s([?,.!](?:\s|$))", r'\1', common_fn(x))
+    elif d_name == 'blend':
+        return lambda x: common_fn(x).replace('  ', ' ')
+
+
+
+
+def process_elem(elem, d_name, max_len=300):
+    pre_fn = get_pre_fn(d_name)
+    cond_fn = lambda seq: len(seq) <= max_len and not re.search(r'[;:]', seq)
+    lst_fn = lambda x, fn: [fn(seq) for seq in x if cond_fn(fn(seq))]
+
+    if d_name == 'daily':
+        orig_turns = len(elem['dialog'])
+        uttr_list = lst_fn(elem['dialog'], pre_fn)
+
+    elif d_name == 'blend':
+        p_elem, f_elem, g_elem = elem['previous_utterance'], elem['free_messages'], elem['guided_messages']
+        uttr_list, free_list, guid_list = lst_fn(p_elem, pre_fn), lst_fn(f_elem, pre_fn), lst_fn(g_elem, pre_fn)
+        orig_turns = len(p_elem) + len(f_elem) + len(g_elem)
+
+        for free, guided in zip(free_list, guid_list):
+            uttr_list.append(pre_fn(free))
+            uttr_list.append(pre_fn(guided))
+
+    return uttr_list if len(uttr_list) == orig_turns else []
+
+
+
+
+def split_uttrs(dial_list):
+    x_data, y_data = [], []
+    dial_turns = len(dial_list)
+
+    if dial_turns < 2:
+        return
+
+    elif dial_turns == 2:
+        x_data.append(dial_list[0])
+        y_data.append(dial_list[1])
+        return  x_data, y_data #To avoid duplicate on below condition
+
+    #Incase of dial_turns is even
+    elif dial_turns % 2 == 0:
+        x_data.extend(dial_list[0::2])
+        y_data.extend(dial_list[1::2])
+
+        x_data.extend(dial_list[1:-1:2])
+        y_data.extend(dial_list[2::2])
+
+    #Incase of dial_turns is odds
+    elif dial_turns % 2 == 1:
+        x_data.extend(dial_list[0:-1:2])
+        y_data.extend(dial_list[1::2])
+
+        x_data.extend(dial_list[1::2])
+        y_data.extend(dial_list[2::2])
+
+    assert len(x_data) == len(y_data)
+    return x_data, y_data
+
+
+
+
+def process_data(d_name):
+    x_data, y_data = [], []
+    orig_data = load_orig_data(d_name)
     
-    return processed
+    for split in ['train', 'validation', 'test']:
+        for elem in orig_data[split]:
+
+            uttr_list = process_elem(elem, d_name)
+            if not uttr_list:
+                continue
+
+            x_uttrs, y_uttrs = split_uttrs(uttr_list)
+            x_data.extend(x_uttrs)
+            y_data.extend(y_uttrs)
+
+    return [{'x': x, 'y': y} for x, y in zip(x_data, y_data)]
 
 
 
 
-def batchify(data, batch_size=16):
-    for idx in range(0, len(data), batch_size):
-        yield data[idx : idx+batch_size]
+def clustering(data_semantics, mname, n_clusters):
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, init='k-means++').fit(data_semantics)
+    clusters = kmeans.labels_.tolist()
+
+    f_name = f"data/clusters/{mname}_cluster_{n_clusters}.json"
+    with open(f_name, 'w') as f:
+        json.dump(clusters, f)
 
 
 
 
-def get_clusters(model, tokenizer, data_obj, n_clusters=20):
-    model.eval()
-    responses = [elem['resp'] for elem in data_obj]
-    batchified = batchify(responses)
+def balance_data():
+    return
 
-    semantics = []
-    for batch in tqdm(batchified):    
-        encodings = tokenizer(batch, padding=True, truncation=True, return_tensors='pt').to(model.device)
-        input_ids, attention_mask = encodings.input_ids, encodings.attention_mask
-        max_len = attention_mask.size(1)
+
+
+
+
+
+def main(args):
+    process_raw_data('daily')
+    process_raw_data('blend')
     
-        with torch.no_grad():
-            output = model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
-        
-        semantic = torch.matmul(attention_mask.type(torch.float32).view(-1, 1, max_len), output).squeeze()
-        
-        if semantic.dim() == 1:
-            semantic = semantic.unsqueeze(0)
-
-        semantics.extend(semantic.detach().to('cpu').numpy())
-
-
-    semantics = np.array(semantics)
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42, init='k-means++').fit(semantics)
-
-    clusters = kmeans.labels_
-    centroids = kmeans.cluster_centers_
-    np.save('data/centroids', centroids)
-
-    return clusters
-
-
-
-
-def tokenize_data(tokenizer, data_obj):
-    tokenized = []
-
-    for elem in data_obj:
-        uttr_encodings = tokenizer(elem['uttr'])
-
-        input_ids = uttr_encodings.input_ids
-        attention_mask = uttr_encodings.attention_mask
-
-        labels = tokenizer(elem['resp']).input_ids
-
-        tokenized.append({'input_ids': input_ids,
-                          'attention_mask': attention_mask,
-                          'labels': labels})    
-
-    return tokenized
-
-
-
-
-
-def save_data(data_obj): 
-    train, valid, test = data_obj[:-6000], data_obj[-6000:-3000], data_obj[-3000:]
-    data_dict = {k:v for k, v in zip(['train', 'valid', 'test'], [train, valid, test])}
-
-    for key, val in data_dict.items():
-        with open(f'data/gen_{key}.json', 'w') as f:
-            json.dump(val, f)        
-        assert os.path.exists(f'data/gen_{key}.json')
-
-
-
-
-
-def main():
-    #Prerequisite
-    config = Config()
-    mname = config.classifier_name
+    mname = 'google-bert/bert-base-uncased' if self.model == 'bert' else 'microsoft/DialoGPT-small'
     tokenizer = AutoTokenizer.from_pretrained(mname)
     classifier = AutoModel.from_pretrained(mname).to(config.device)
+    classifier.eval()
 
 
-    #Load orig_data
-    orig_data = load_dataset('daily_dialog')
 
+    return
 
-    #preprocess orig data
-    processed_data = preprocess_data(orig_data['train']['dialog']) +\
-                     preprocess_data(orig_data['validation']['dialog']) +\
-                     preprocess_data(orig_data['test']['dialog'])
-
-    
-    #Add cluster info up to the processed data
-    cluster_data = get_clusters(sem_model, sem_tokenizer, processed_data)
-
-
-    #tokenize data and add up cluster info
-    tokenized_data = tokenize_data(tokenizer, processed_data)
-    for elem, cluster in zip(tokenized_data, cluster_data):
-        elem.update({'cluster': cluster})
-
-    
-    #save the data
-    save_data(tokenized_data)
 
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-model', required=True)
+    parser.add_argument('-cluster', required=True)
+    
+    args = parser.parse_args()
+    assert args.model in ['bert', 'dialogpt']
+    assert args.cluster in [10, 20, 30, 50]
+    
+    main(args)    
