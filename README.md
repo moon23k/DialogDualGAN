@@ -1,4 +1,4 @@
-## DRESS (Diversifying RESponses Semantically)
+## SAID (Semantically bAlanced dIalogue Datset)
 
 > 
 
