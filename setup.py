@@ -1,10 +1,9 @@
-import os, re, json, yaml, argparse
+import os, re, json, yaml, argparse, numpy
 
 import datasets
 from datasets import load_dataset
-
-import numpy as np
 from sklearn.cluster import KMeans
+from collections import defaultdict
 from transformers import AutoModel, AutoTokenizer
 
 from tokenizers.models import BPE
@@ -13,16 +12,6 @@ from tokenizers.trainers import BpeTrainer
 from tokenizers.pre_tokenizers import Whitespace
 from tokenizers.normalizers import NFD, Lowercase, StripAccents
 
-
-
-
-
-
-def load_orig_data(d_name):
-    if d_name == 'daily':
-        return load_dataset('daily_dialog', trust_remote_code=True)
-    elif d_name == 'blend':
-        return load_dataset('blended_skill_talk', trust_remote_code=True)
 
 
 
@@ -95,75 +84,158 @@ def split_uttrs(dial_list):
 
 
 
-def process_data(d_name):
+def process_data():
     x_data, y_data = [], []
-    orig_data = load_orig_data(d_name)
-    
-    for split in ['train', 'validation', 'test']:
-        for elem in orig_data[split]:
 
-            uttr_list = process_elem(elem, d_name)
-            if not uttr_list:
-                continue
+    data_dict = {
+        'daily': load_dataset('daily_dialog', trust_remote_code=True),
+        'blend': load_dataset('blended_skill_talk', trust_remote_code=True)
+    }
 
-            x_uttrs, y_uttrs = split_uttrs(uttr_list)
-            x_data.extend(x_uttrs)
-            y_data.extend(y_uttrs)
+    for data_name, data_obj in data_dict.items():
+        for split in ['train', 'validation', 'test']:
+            for elem in data_obj[split]:
+
+                uttr_list = process_elem(elem, data_name)
+                if not uttr_list:
+                    continue
+
+                x_uttrs, y_uttrs = split_uttrs(uttr_list)
+                x_data.extend(x_uttrs)
+                y_data.extend(y_uttrs)
 
     return [{'x': x, 'y': y} for x, y in zip(x_data, y_data)]
 
 
 
 
-def clustering(data_semantics, mname, n_clusters):
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42, init='k-means++').fit(data_semantics)
-    clusters = kmeans.labels_.tolist()
+def extract_semantics(processed_data):
 
-    f_name = f"data/clusters/{mname}_cluster_{n_clusters}.json"
-    with open(f_name, 'w') as f:
-        json.dump(clusters, f)
+    def batchify(data, batch_size=128):
+        for idx in range(0, len(data), batch_size):
+            yield data[idx : idx+batch_size]
 
 
-
-
-def balance_data(total_volumn=111000):
-    balanced = []
-    count = defaultdict(int)  # 각 클러스터별로 추가된 데이터 개수를 세기 위한 defaultdict
-
-    # 하나의 반복문에서 각 클러스터별 데이터 개수를 맞추면서 balanced 리스트에 추가
-    for idx, cluster in enumerate(cluster_data):
-        if count[cluster] < min_cluster_size:
-            balanced.append({'x': raw_data[idx]['x'], 'y': raw_data[idx]['y'], 'cluster': cluster})
-            count[cluster] += 1
-
-    return balanced
-
-
-
-
-
-
-def main(n_clusters):
-    process_raw_data('daily')
-    process_raw_data('blend')
-    
+    #Prerequisites
     mname = 'google-bert/bert-base-uncased'
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     tokenizer = AutoTokenizer.from_pretrained(mname)
-    classifier = AutoModel.from_pretrained(mname).to(config.device)
+    classifier = AutoModel.from_pretrained(mname).to(device)
     classifier.eval()
 
+
+    #Extract Semantic Vectors
+    semantics = []
+    batchified = batchify([elem['y'] for elem in processed_data])
+    for batch in batchified:
+        encodings = tokenizer(batch, padding=True, truncation=True, return_tensors='pt').to(device)
+        
+        with torch.no_grad():
+            semantic = classifier(**encodings).last_hidden_state[:, 0, :]
+            
+        semantics.append(semantic.detach().to('cpu').numpy())
+
+
+    return numpy.vstack(semantics)
+
+
+
+
+def cluster_data(processed_data, n_cluster, total_volumn=111000):
+
+    #KMeans Clustering
+    semantics = extract_semantics(processed_data)
+    kmeans = KMeans(n_clusters=n_cluster, random_state=42, init='k-means++').fit(semantics)
+    clusters = kmeans.labels_.tolist()
+
+    #Balance Dataset based on Cluster
+    corpus = []
+    clustered_data = defaultdict(list)
+    volumn_count = defaultdict(int)
+    cluster_volumn = total_volumn // n_cluster
+    
+    for idx, cluster in enumerate(clusters):
+        if volumn_count[cluster] < cluster_volumn:
+            clustered_data[cluster].append({
+                'x': processed_data[idx]['x'], 
+                'y': processed_data[idx]['y']
+            })
+            volumn_count[cluster] += 1
+
+    return clustered_data
+
+
+
+
+def balance_data(clustered_data, n_cluster):
+    corpus, balanced_data = [], []
+    for i in range(len(clustered_data[0])):
+        for j in range(n_cluster):
+            x, y = clustered_data[j][i]['x'], clustered_data[j][i]['y']
+            corpus.append(x)
+            corpus.append(y)            
+            balanced_data.append({'x': x, 'y': y, 'cluster': j})
+
+    with open('data/corpus.txt', 'w') as f:
+        f.write('\n'.join(corpus))
+
+    return balanced_data
+
+
+
+def train_tokenizer():
+    corpus_path = 'data/corpus.txt'
+    assert os.path.exists(corpus_path)
+    
+    assert os.path.exists('config.yaml')
+    with open('config.yaml', 'r') as f:
+        tok_config = yaml.load(f, Loader=yaml.FullLoader)['tokenizer']
+
+    tokenizer = Tokenizer(BPE(unk_token=tok_config['unk_token']))
+    tokenizer.normalizer = normalizers.Sequence([NFD(), Lowercase(), StripAccents()])
+    tokenizer.pre_tokenizer = Whitespace()
+    trainer = BpeTrainer(
+        vocab_size=tok_config['vocab_size'], 
+        special_tokens=[
+            tok_config['pad_token'], 
+            tok_config['unk_token'],
+            tok_config['bos_token'],
+            tok_config['eos_token']
+            ]
+        )
+
+    tokenizer.train(files=[corpus_path], trainer=trainer)
+    tokenizer.save("data/tokenizer.json")
+
+
+
+
+def save_data(data_obj):
 
 
     return
 
 
 
+def main(n_cluster):
+
+    if not os.path.exists('data/raw_data.json'):
+        processed_data = process_data()
+
+    clustered_data = cluster_data(processed_data, n_cluster)
+    balanced_data = balance_data(clustered_data, n_cluster)
+
+    train_tokenizer()
+    save_data(balanced_data)
+
+
+
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('-n_clusters', required=True)
-    
+    parser.add_argument('-n_cluster', required=True)
     args = parser.parse_args()
-    assert args.cluster in [10, 20, 30, 50]
     
     main(args)    
