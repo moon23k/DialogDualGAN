@@ -126,19 +126,28 @@ def clustering(data_semantics, mname, n_clusters):
 
 
 
-def balance_data():
-    return
+def balance_data(total_volumn=111000):
+    balanced = []
+    count = defaultdict(int)  # 각 클러스터별로 추가된 데이터 개수를 세기 위한 defaultdict
+
+    # 하나의 반복문에서 각 클러스터별 데이터 개수를 맞추면서 balanced 리스트에 추가
+    for idx, cluster in enumerate(cluster_data):
+        if count[cluster] < min_cluster_size:
+            balanced.append({'x': raw_data[idx]['x'], 'y': raw_data[idx]['y'], 'cluster': cluster})
+            count[cluster] += 1
+
+    return balanced
 
 
 
 
 
 
-def main(args):
+def main(n_clusters):
     process_raw_data('daily')
     process_raw_data('blend')
     
-    mname = 'google-bert/bert-base-uncased' if self.model == 'bert' else 'microsoft/DialoGPT-small'
+    mname = 'google-bert/bert-base-uncased'
     tokenizer = AutoTokenizer.from_pretrained(mname)
     classifier = AutoModel.from_pretrained(mname).to(config.device)
     classifier.eval()
@@ -152,11 +161,9 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('-model', required=True)
-    parser.add_argument('-cluster', required=True)
+    parser.add_argument('-n_clusters', required=True)
     
     args = parser.parse_args()
-    assert args.model in ['bert', 'dialogpt']
     assert args.cluster in [10, 20, 30, 50]
     
     main(args)    
