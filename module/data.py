@@ -14,8 +14,10 @@ class Dataset(torch.utils.data.Dataset):
 
     @staticmethod
     def load_data(split):
+        
         with open(f"data/{split}.json", 'r') as f:
             dial_data = json.load(f)
+
         with open(f"data/cluster.json", 'r') as f:
             cluster_data = json.load(f)
 
@@ -25,27 +27,44 @@ class Dataset(torch.utils.data.Dataset):
         return len(self.data)
     
     def __getitem__(self, idx):
-        input_ids = self.data[idx]['input_ids']
-        attention_mask = self.data[idx]['attention_mask']
-        labels = self.data[idx]['labels']
-        return input_ids, attention_mask, labels
+        x = self.dial_data[idx]['x']
+        y = self.dial_data[idx]['y']
+        cluster = self.cluster_data[idx]['cluster']
+        return x, y, cluster
 
 
 
-def load_dataloader(config, split):
-    self.pad_id = config.pad_id    
 
-    def collate_fn(batch):
-        ids_batch, mask_batch, labels_batch = [], [], []
-        
-        
-        return {'input_ids': ids_batch,
-                'attention_mask': mask_batch,
-                'labels': labels_batch}
+class Collator(object):
+
+    def __init__(self, pad_id):
+        self.pad_id = pad_id
 
 
-    return DataLoader(Dataset(split, config.n_cluster), 
-                      batch_size=config.batch_size, 
-                      shuffle=True,
-                      collate_fn=collate_fn,
-                      num_workers=2)
+    def __call__(self, batch):
+        x_batch, y_batch, cluster_batch = zip(*batch)
+
+        return {'x': self.pad_batch(x_batch),
+                'y': self.pad_batch(y_batch),
+                'cluster': cluster_batch}
+
+
+    def pad_batch(self, batch):
+        return pad_sequence(
+            batch, 
+            batch_first=True, 
+            padding_value=self.pad_id
+        )
+
+
+
+
+def load_dataloader(config, tokenizer, split):
+    return DataLoader(
+        Dataset(tokenizer, config.task, split), 
+        batch_size=config.batch_size, 
+        shuffle=split == 'train',
+        collate_fn=Collator(config.pad_id),
+        pin_memory=True,
+        num_workers=2
+    )
