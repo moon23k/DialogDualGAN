@@ -109,6 +109,7 @@ def process_data():
 
 
 
+
 def extract_semantics(processed_data):
 
     def batchify(data, batch_size=128):
@@ -184,6 +185,7 @@ def balance_data(clustered_data, n_cluster):
 
 
 
+
 def train_tokenizer():
     corpus_path = 'data/corpus.txt'
     assert os.path.exists(corpus_path)
@@ -215,6 +217,7 @@ def save_data(data_obj):
 
 
     return
+
 
 
 

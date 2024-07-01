@@ -36,7 +36,6 @@ class Dataset(torch.utils.data.Dataset):
 
 
 class Collator(object):
-
     def __init__(self, pad_id):
         self.pad_id = pad_id
 

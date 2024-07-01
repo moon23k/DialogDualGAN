@@ -19,10 +19,15 @@ class Tester:
         self.max_len = config.max_len
         
         mname = 'bert-base-uncased'
-        self.metric_module = evaluate.load('rouge')
-        self.metric_tokenizer = AutoTokenizer.from_pretrained(mname)
-        self.metric_model = AutoModel.from_pretrained(mname).to(self.device)
-        self.centroids = np.load(f'data/centroids_{config.n_clusters}.npy')
+        self.rouge_module = evaluate.load('rouge')
+        self.balance_tokenizer = AutoTokenizer.from_pretrained(mname)
+        self.balance_model = AutoModel.from_pretrained(mname).to(self.device)
+        self.balance_centroids = np.load(f'data/centroids_{config.n_clusters}.npy')
+
+
+
+    def tokenize(self, batch):
+        return [self.tokenizer.decode(x) for x in batch.tolist()]
 
 
     def test(self):
@@ -37,19 +42,18 @@ class Tester:
                 pred = self.predict(x)
                 pred = self.tokenize(pred)
                 
-                rouge_batch_score, diverse_batch_score = self.evaluate(pred, y)
+                rouge_batch_score, 
+                squad_batch_score = self.evaluate(pred, y)
                 rouge_batch_score += rouge_score
                 diverse_score += diverse_batch_score
 
 
         txt = f"TEST Results\n"
-        txt += f"-- Rouge Score: {round(score/len(self.dataloader), 2)}\n"
-        txt += f"-- Diverse Score: {round(score/len(self.dataloader), 2)}\n"
+        txt += f"-- ROUGE Score: {round(rouge_score/len(self.dataloader), 2)}\n"
+        txt += f"-- SQUAD Score: {round(squad_score/len(self.dataloader), 2)}\n"
         print(txt)
 
 
-    def tokenize(self, batch):
-        return [self.tokenizer.decode(x) for x in batch.tolist()]
 
 
     def predict(self, x):
@@ -73,31 +77,34 @@ class Tester:
 
 
 
-    def evaluate(self, pred, label):
-        if all(elem == '' for elem in pred):
-            return 0.0, 0.0
-
-
-        #Get Rouge Score Process        
-        rouge_score = self.metric_module.compute(
-            predictions=pred, 
-            references =[[l] for l in label]
-        )['rouge2'] * 100
-
-
-        #Get Diverse Score Process
-        encodings = self.metric_tokenizer(
+    def calc_squad_score(self, pred):
+        
+        encodings = self.balance_tokenizer(
             pred, padding=True, truncation=True, return_tensors='pt'
         ).to(self.device)
         
         with torch.no_grad():
-            semantic = self.metric_model(**encodings).last_hidden_state[:, 0, :]
-            
-        semantic = semantic.detach().to('cpu').numpy()
-        distance = cdist(self.centroids, [semantic])
-        pred_cluster = np.argmin(distance)
+            semantics = self.balance_model(**encodings).last_hidden_state[:, 0, :]
 
+
+        #cluster_dist = self.balance_centroids.predict(semantic.detach().to('cpu').numpy())
+        cluster_distance = cdist(self.balance_centroids, [semantics])
+        cluster_distribution = np.argmin(cluster_distance)
+
+        max_cnt, min_cnt = np.max(cluster_distribution), np.min(cluster_distribution)
+        score = 100 * (1 - (max_cnt - min_cnt) / self.n_cluster)
         
-        cluster_acc = None
+        return round(score, 2)
 
-        return rouge_score, diverse_score
+
+
+    def calc_rouge_score(self, pred, label):
+        if all(elem == '' for elem in pred):
+            return 0.0, 0.0
+
+        score = self.rouge_module.compute(
+            predictions=pred, 
+            references =[[l] for l in label]
+        )['rouge2'] * 100
+
+        return round(score, 2)
