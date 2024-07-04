@@ -7,29 +7,32 @@ from torch.nn.utils.rnn import pad_sequence
 
 
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self, split, n_cluster):
+    def __init__(self, tokenizer, split):
         super().__init__()
-        self.dial_data, self.cluster_data = self.load_data(split, n_cluster)
+        self.tokenizer = tokenizer
+        self.data = self.load_data(split)
 
 
     @staticmethod
-    def load_data(split):
-        
+    def load_data(split):        
         with open(f"data/{split}.json", 'r') as f:
-            dial_data = json.load(f)
+            data = json.load(f)
+        return data
 
-        with open(f"data/cluster.json", 'r') as f:
-            cluster_data = json.load(f)
-
-        return dial_data, cluster_data
 
     def __len__(self):
         return len(self.data)
     
+
     def __getitem__(self, idx):
-        x = self.dial_data[idx]['x']
-        y = self.dial_data[idx]['y']
-        cluster = self.cluster_data[idx]['cluster']
+        to_tensor = lambda x: torch.LongTensor(x)
+
+        elem = self.data[idx]
+
+        x = to_tensor(self.tokenizer.encode(elem['x']).ids)
+        y = to_tensor(self.tokenizer.encode(elem['y']).ids)
+        cluster = to_tensor([elem['cluster']])
+
         return x, y, cluster
 
 
@@ -42,25 +45,19 @@ class Collator(object):
 
     def __call__(self, batch):
         x_batch, y_batch, cluster_batch = zip(*batch)
+        
+        x_batch = pad_sequence(x_batch, batch_first=True, padding_value=self.pad_id)
+        y_batch = pad_sequence(y_batch, batch_first=True, padding_value=self.pad_id)
+        cluster_batch = torch.LongTensor(cluster_batch)
 
-        return {'x': self.pad_batch(x_batch),
-                'y': self.pad_batch(y_batch),
-                'cluster': cluster_batch}
-
-
-    def pad_batch(self, batch):
-        return pad_sequence(
-            batch, 
-            batch_first=True, 
-            padding_value=self.pad_id
-        )
+        return {'x': x_batch, 'y': y_batch, 'cluster': cluster_batch}
 
 
 
 
 def load_dataloader(config, tokenizer, split):
     return DataLoader(
-        Dataset(tokenizer, config.task, split), 
+        Dataset(tokenizer, split), 
         batch_size=config.batch_size, 
         shuffle=split == 'train',
         collate_fn=Collator(config.pad_id),

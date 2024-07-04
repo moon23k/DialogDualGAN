@@ -36,7 +36,7 @@ def load_model(config):
     model = Transformer(config)
 
     init_weights(model)
-    print(f"Initialized {config.path} Model has Loaded")
+    print("Initialized Model has Loaded")
 
     if config.mode != 'train':
         assert os.path.exists(config.ckpt)

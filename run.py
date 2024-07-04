@@ -36,9 +36,8 @@ class Config(object):
                     setattr(self, key, val)
 
         self.mode = args.mode
-        self.n_cluster = args.n_cluster
-        self.ckpt = f'ckpt/cluster{self.n_cluster}_model.pt'
-        self.tokenizer_path = f'data/tokenizer_{self.n_cluster}.json'
+        self.ckpt = 'ckpt/model.pt'
+        self.tokenizer_path = 'data/tokenizer.json'
         
         use_cuda = torch.cuda.is_available()
         device_condition = use_cuda and self.mode != 'inference'
@@ -94,10 +93,8 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-mode', required=True)
-    parser.add_argument('-n_clusters', required=True)
     
     args = parser.parse_args()
     assert args.mode in ['train', 'test', 'inference']
-    assert args.n_clusters in [10, 20, 30, 50]
 
     main(args)
