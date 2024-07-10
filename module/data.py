@@ -25,32 +25,25 @@ class Dataset(torch.utils.data.Dataset):
     
 
     def __getitem__(self, idx):
-        to_tensor = lambda x: torch.LongTensor(x)
+        x = self.tokenizer.encode(self.data[idx]['x']).ids
+        y = self.tokenizer.encode(self.data[idx]['y']).ids
 
-        elem = self.data[idx]
-
-        x = to_tensor(self.tokenizer.encode(elem['x']).ids)
-        y = to_tensor(self.tokenizer.encode(elem['y']).ids)
-        cluster = to_tensor([elem['cluster']])
-
-        return x, y, cluster
+        return torch.LongTensor(x), torch.LongTensor(y)
 
 
 
 
 class Collator(object):
     def __init__(self, pad_id):
-        self.pad_id = pad_id
+        self.pad_args = {'batch_first': True, 'padding_value': pad_id}
 
 
     def __call__(self, batch):
         x_batch, y_batch, cluster_batch = zip(*batch)
-        
-        x_batch = pad_sequence(x_batch, batch_first=True, padding_value=self.pad_id)
-        y_batch = pad_sequence(y_batch, batch_first=True, padding_value=self.pad_id)
-        cluster_batch = torch.LongTensor(cluster_batch)
+        x_batch = pad_sequence(x_batch, **self.pad_args)
+        y_batch = pad_sequence(y_batch, **self.pad_args)
 
-        return {'x': x_batch, 'y': y_batch, 'cluster': cluster_batch}
+        return {'x': x_batch, 'y': y_batch}
 
 
 

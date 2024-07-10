@@ -1,4 +1,5 @@
 import torch, evaluate
+from transformers import AutoModel, AutoTokenizer
 
 
 
@@ -16,6 +17,8 @@ class Tester:
         self.max_len = config.max_len
         
         self.metric_module = evaluate.load('rouge')
+        self.balance_model = AutoModel.from_pretrained(config.mname)
+        self.balance_tokenizer = AutoTokenizer.from_pretrained(config.mname)
         
 
 

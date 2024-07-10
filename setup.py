@@ -1,7 +1,8 @@
-import os, re, json, yaml, argparse, numpy
+import os, re, json, yaml, argparse, numpy, torch
 
 import datasets
 from datasets import load_dataset
+
 from sklearn.cluster import KMeans
 from collections import defaultdict
 from transformers import AutoModel, AutoTokenizer
@@ -15,22 +16,37 @@ from tokenizers.normalizers import NFD, Lowercase, StripAccents
 
 
 
+def filter_seq(seq, max_len=300):
+    if len(seq) > max_len or 'xx' in seq:
+        return False
+        
+    if not bool(re.search(r'[^a-zA-Z0-9?!@#$%&-\'\".,]', seq)):
+        return False
+        
+    return True
 
-def get_pre_fn(d_name):
-    common_fn = lambda x: re.sub(r'\.$', '', re.sub(r'。', '', re.sub(r"\s*'\s*", "'", x))).lower().strip()
 
+
+def clean_seq(seq, d_name):
     if d_name == 'daily':
-        return lambda x: re.sub(r"\s([?,.!](?:\s|$))", r'\1', common_fn(x))
-    elif d_name == 'blend':
-        return lambda x: common_fn(x).replace('  ', ' ')
+        seq = re.sub(r"\s([?,.!](?:\s|$))", r'\1', seq)
+    elif d_name == 'samsum':
+        seq = re.sub(r'\n', ' ', re.sub(r'\w+: ', '', seq))
+    
+    seq = re.sub(r'(?<=[.,])(?=[^\s])', r' ', seq)
+    seq = re.sub(r"\s*'\s*", "'", seq)
+    seq = re.sub(r'\.{1,}$', '', seq)
+
+    seq = seq.replace('!!', '!').replace(' ,', ',')
+    seq = seq.lower().strip().rstrip('.')
+    
+    return seq
+
 
 
 
 
 def process_elem(elem, d_name, max_len=300):
-    pre_fn = get_pre_fn(d_name)
-    cond_fn = lambda seq: len(seq) <= max_len and not re.search(r'[;:]', seq)
-    lst_fn = lambda x, fn: [fn(seq) for seq in x if cond_fn(fn(seq))]
 
     if d_name == 'daily':
         orig_turns = len(elem['dialog'])
@@ -44,6 +60,10 @@ def process_elem(elem, d_name, max_len=300):
         for free, guided in zip(free_list, guid_list):
             uttr_list.append(pre_fn(free))
             uttr_list.append(pre_fn(guided))
+    
+    elif d_name == 'samsum':
+        uttr_list = lst_fn(elem['dialogue'], pre_fn)
+        pass
 
     return uttr_list if len(uttr_list) == orig_turns else []
 
@@ -89,7 +109,8 @@ def process_data():
 
     data_dict = {
         'daily': load_dataset('daily_dialog', trust_remote_code=True),
-        'blend': load_dataset('blended_skill_talk', trust_remote_code=True)
+        'blend': load_dataset('blended_skill_talk', trust_remote_code=True),
+        'samsum': load_dataset('Samsung/samsum', trust_remote_code=True)
     }
 
     for data_name, data_obj in data_dict.items():
@@ -215,17 +236,22 @@ def train_tokenizer():
 
 def save_data(data_obj):
 
+    data_dict = {
+        'train': data_obj[:-55100],
+        'valid': data_obj[55000:-100],
+        'test': data_obj[:-100]
+    }
 
-    return
+    for key, val in data_dict.items():
+        with open(f'data/{key}.json', 'w') as f:
+            json.dump(val, f)
 
 
 
 
 def main(n_cluster):
 
-    if not os.path.exists('data/raw_data.json'):
-        processed_data = process_data()
-
+    processed_data = process_data()
     clustered_data = cluster_data(processed_data, n_cluster)
     balanced_data = balance_data(clustered_data, n_cluster)
 
@@ -241,4 +267,4 @@ if __name__ == '__main__':
     parser.add_argument('-n_cluster', required=True)
     args = parser.parse_args()
     
-    main(args)    
+    main(args)
